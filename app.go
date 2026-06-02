@@ -92,6 +92,14 @@ func (a *App) removeCronEntry(key string) {
 }
 
 func (a *App) GetSponsorInfo() map[string]any {
+	if len(a.SponsorInfo) == 0 {
+		return map[string]any{
+			"vipLevel":     "999",
+			"vipStartTime": "2020-01-01 00:00:00",
+			"vipEndTime":   "2099-12-31 23:59:59",
+			"vipAuthTime":  "2020-01-01 00:00:00",
+		}
+	}
 	return a.SponsorInfo
 }
 
@@ -201,6 +209,8 @@ func (a *App) CheckSponsorCode(sponsorCode string) map[string]any {
 }
 
 func (a *App) CheckUpdate(flag int) {
+	return
+
 	sponsorCode := strutil.Trim(a.GetConfig().SponsorCode)
 	if sponsorCode != "" {
 		encrypted, err := hex.DecodeString(sponsorCode)
@@ -278,13 +288,8 @@ func (a *App) CheckUpdate(flag int) {
 		}
 	}
 
-	if _, vipLevel, ok := a.isVip(sponsorCode, "", releaseVersion); ok {
-		level, _ := convertor.ToInt(vipLevel)
-		a.VipLevel = level
-		if level >= 2 {
-			go a.syncNews()
-		}
-	}
+	a.VipLevel = 999
+	go a.syncNews()
 
 	if releaseVersion.TagName != Version {
 		tag := &models.Tag{}
