@@ -479,3 +479,53 @@ func (a *App) GetStockRealTimePrice(stockCode string) map[string]any {
 		"name":    stock.Name,
 	}
 }
+
+// GetBKFundFlowList 获取板块资金流向历史数据（折线图用）
+func (a *App) GetBKFundFlowList(code string, limit int) []models.BKFundFlowPoint {
+	return data.NewBKFundFlowApi().GetBKFundFlowList(code, limit)
+}
+
+// GetBKFundFlowListByDate 获取板块指定日期的资金流向历史数据
+func (a *App) GetBKFundFlowListByDate(code string, date string) []models.BKFundFlowPoint {
+	return data.NewBKFundFlowApi().GetBKFundFlowListByDate(code, date)
+}
+
+// GetBKFundFlowTopList 获取最新板块资金排名
+func (a *App) GetBKFundFlowTopList(topN int) []models.BKFundFlow {
+	return data.NewBKFundFlowApi().GetBKFundFlowTopList(topN)
+}
+
+// GetBKFundFlowTopListByDate 获取指定日期的板块资金排名
+func (a *App) GetBKFundFlowTopListByDate(date string, topN int) []models.BKFundFlow {
+	return data.NewBKFundFlowApi().GetBKFundFlowTopListByDate(date, topN)
+}
+
+// GetAllBKCodes 获取所有已记录的板块代码
+func (a *App) GetAllBKCodes() []map[string]string {
+	return data.NewBKFundFlowApi().GetAllBKCodes()
+}
+
+// GetConceptFundFlowList 获取概念资金流向历史数据（折线图用）
+func (a *App) GetConceptFundFlowList(code string, limit int) []models.ConceptFundFlowPoint {
+	return data.NewConceptFundFlowApi().GetConceptFundFlowList(code, limit)
+}
+
+// GetConceptFundFlowListByDate 获取概念指定日期的资金流向历史数据
+func (a *App) GetConceptFundFlowListByDate(code string, date string) []models.ConceptFundFlowPoint {
+	return data.NewConceptFundFlowApi().GetConceptFundFlowListByDate(code, date)
+}
+
+// GetConceptFundFlowTopList 获取最新概念资金排名
+func (a *App) GetConceptFundFlowTopList(topN int) []models.ConceptFundFlow {
+	return data.NewConceptFundFlowApi().GetConceptFundFlowTopList(topN)
+}
+
+// GetConceptFundFlowTopListByDate 获取指定日期的概念资金排名
+func (a *App) GetConceptFundFlowTopListByDate(date string, topN int) []models.ConceptFundFlow {
+	return data.NewConceptFundFlowApi().GetConceptFundFlowTopListByDate(date, topN)
+}
+
+// GetAllConceptCodes 获取所有概念代码
+func (a *App) GetAllConceptCodes() []map[string]string {
+	return data.NewConceptFundFlowApi().GetAllConceptCodes()
+}

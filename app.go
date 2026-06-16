@@ -780,6 +780,34 @@ func (a *App) domReady(ctx context.Context) {
 			a.setCronEntry("FetchAndSaveMarketStatistic", idMarketStat)
 		}
 	}()
+	// 板块资金流向数据采集（交易日每60秒）
+	go func() {
+		data.NewBKFundFlowApi().FetchAndSave()
+		idBKFundFlow, err := a.cron.AddFunc("@every 60s", func() {
+			if a.IsTradingTime() {
+				data.NewBKFundFlowApi().FetchAndSave()
+			}
+		})
+		if err != nil {
+			logger.SugaredLogger.Errorf("AddFunc BKFundFlowFetchAndSave error:%s", err.Error())
+		} else {
+			a.setCronEntry("BKFundFlowFetchAndSave", idBKFundFlow)
+		}
+	}()
+	// 概念资金流向数据采集（交易日每60秒）
+	go func() {
+		data.NewConceptFundFlowApi().FetchAndSave()
+		idConceptFundFlow, err := a.cron.AddFunc("@every 60s", func() {
+			if a.IsTradingTime() {
+				data.NewConceptFundFlowApi().FetchAndSave()
+			}
+		})
+		if err != nil {
+			logger.SugaredLogger.Errorf("AddFunc ConceptFundFlowFetchAndSave error:%s", err.Error())
+		} else {
+			a.setCronEntry("ConceptFundFlowFetchAndSave", idConceptFundFlow)
+		}
+	}()
 	//检查新版本
 	go func() {
 		a.CheckUpdate(0)
@@ -1802,6 +1830,16 @@ func (a *App) SendDingDingMessageByType(message string, stockCode string, msgTyp
 }
 
 func (a *App) NewChatStream(stock, stockCode, question string, aiConfigId int, sysPromptId *int, enableTools bool, think bool) {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.SugaredLogger.Errorf("NewChatStream panic: %v", err)
+			runtime.EventsEmit(a.ctx, "newChatStream", map[string]any{
+				"code":    0,
+				"content": fmt.Sprintf("AI分析异常: %v", err),
+			})
+			runtime.EventsEmit(a.ctx, "newChatStream", "DONE")
+		}
+	}()
 	var msgs <-chan map[string]any
 	if enableTools {
 		msgs = data.NewDeepSeekOpenAi(a.ctx, aiConfigId).NewChatStream(stock, stockCode, question, sysPromptId, a.AiTools, think)
