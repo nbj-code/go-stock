@@ -1623,7 +1623,7 @@ func MonitorFollowedStockCostPrices(a *App) {
 	}
 
 	var followedStocks []data.FollowedStock
-	db.Dao.Model(&data.FollowedStock{}).Where("cost_price > 0").Find(&followedStocks)
+	db.Dao.Model(&data.FollowedStock{}).Where("cost_price > 0 AND is_del = 0").Find(&followedStocks)
 
 	if len(followedStocks) == 0 {
 		return
@@ -3555,6 +3555,37 @@ func (a *App) GetMarketStatisticByDate(date string) []models.MarketStatistic {
 
 func (a *App) GetRecentDaysMarketStatistic(days int) []models.MarketStatistic {
 	return data.NewMarketStatisticApi().GetRecentDaysData(days)
+}
+
+// GetIndexTline 获取指数分时数据（财联社）
+// date 格式: "2026-07-22" 或 "20260722"，空字符串取当日
+func (a *App) GetIndexTline(date string) *data.IndexTlineResult {
+	res, err := data.NewClsMarketApi().GetIndexTline(date)
+	if err != nil {
+		logger.SugaredLogger.Errorf("GetIndexTline error: %v", err)
+		return nil
+	}
+	return res
+}
+
+// GetSectorAnchors 获取板块异动时间点（财联社）
+// date 格式: "2026-07-22" 或 "20260722"，空字符串取当日
+func (a *App) GetSectorAnchors(date string) []data.SectorAnchor {
+	res, err := data.NewClsMarketApi().GetSectorAnchors(date)
+	if err != nil {
+		logger.SugaredLogger.Errorf("GetSectorAnchors error: %v", err)
+		return nil
+	}
+	return res
+}
+
+func (a *App) GetMarketEmotion() *data.MarketEmotion {
+	res, err := data.NewClsMarketApi().GetMarketEmotion()
+	if err != nil {
+		logger.SugaredLogger.Errorf("GetMarketEmotion error: %v", err)
+		return nil
+	}
+	return res
 }
 
 func (a *App) CreateMCPServer(server *models.MCPServer) string {
