@@ -6,6 +6,7 @@ import {
   GetIndexTline,
   GetSectorAnchors,
   GetMarketEmotion,
+  GetIndexQuotes,
   GlobalStockIndexes
 } from "../../wailsjs/go/main/App";
 import * as echarts from "echarts";
@@ -51,21 +52,38 @@ const emotion = ref(null)          // 市场情绪数据
 // 全球主要股指
 const globalIndexes = ref([])
 
-// A股四大指数（上证指数/深证成指/创业板指/科创50）
+// A股四大指数（上证指数/深证成指/创业板指/科创50）- 从财联社API获取
 const aShareIndexNames = ['上证指数', '深证成指', '创业板指', '科创50']
-const aShareIndexes = computed(() => {
-  return aShareIndexNames
-    .map(n => globalIndexes.value.find(i => i.name === n))
-    .filter(Boolean)
-})
+const aShareIndexes = ref([])
+async function handleIndexQuotes() {
+  try {
+    const quotes = await GetIndexQuotes()
+    if (!quotes || quotes.length === 0) return
+    aShareIndexes.value = aShareIndexNames
+      .map(n => {
+        const q = quotes.find(i => i.secu_name === n || i.secu_name.startsWith(n) || n.startsWith(i.secu_name))
+        return q ? {
+          name: q.secu_name,
+          lastPx: q.last_px,
+          change: (q.change * 100).toFixed(2) + '%'
+        } : null
+      })
+      .filter(Boolean)
+    console.log('[AnalyzeMartket] aShareIndexes:', aShareIndexes.value)
+  } catch (error) {
+    console.error('获取A股指数行情失败:', error)
+  }
+}
 
 onMounted(() => {
   handleChart()
   handleTlineChart()
   handleGlobalIndexes()
+  handleIndexQuotes()
   handleEmotion()
   handleChartInterval = setInterval(function () {
     handleGlobalIndexes()
+    handleIndexQuotes()
     handleEmotion()
     // 仅查看当日时自动刷新涨跌停和分时
     if (viewingToday.value) {
@@ -137,10 +155,15 @@ async function handleGlobalIndexes() {
       ...(resp.asia || []),
       ...(resp.america || [])
     ]
-    globalIndexes.value = all.map(item => ({
-      name: item.name || item.code || '',
-      change: item.zdf || ''
-    })).filter(i => i.name)
+    globalIndexes.value = all.map(item => {
+      const zxj = parseFloat(item.zxj)
+      return {
+        name: item.name || item.code || '',
+        lastPx: isNaN(zxj) ? null : zxj,
+        change: item.zdf || ''
+      }
+    }).filter(i => i.name)
+    console.log('[AnalyzeMartket] globalIndexes names:', globalIndexes.value.map(i => i.name))
   } catch (error) {
     console.error('获取全球指数数据失败:', error)
   }
@@ -480,7 +503,8 @@ function renderTlineChart(items, anchors) {
       <span v-for="idx in globalIndexes" :key="idx.name" style="display:inline-flex;align-items:center;margin-right:16px;white-space:nowrap">
         <n-tag size="small"  :bordered="false" :type="getChangeType(idx.change)">
           {{ idx.name }}
-          <span style="font-weight:bold">{{ formatChange(idx.change) }}</span>
+          <n-text :type="getChangeType(idx.change)" strong style="margin:0 3px">{{ idx.lastPx != null ? idx.lastPx.toFixed(2) : '--' }}</n-text>
+          <n-text :type="getChangeType(idx.change)" strong>{{ formatChange(idx.change) }}</n-text>
         </n-tag>
       </span>
     </n-marquee>
@@ -512,9 +536,10 @@ function renderTlineChart(items, anchors) {
         </template>
         <template v-if="aShareIndexes.length > 0">
           <n-divider vertical v-if="emotion"/>
-          <n-text v-for="idx in aShareIndexes" :key="idx.name" depth="2" style="font-size:13px;white-space:nowrap">
+          <n-text v-for="idx in aShareIndexes" :key="idx.name" :type="getChangeType(idx.change)" strong style="font-size:13px;white-space:nowrap">
             {{ idx.name }}
-            <n-text strong :type="getChangeType(idx.change)" style="margin-left:3px">{{ formatChange(idx.change) }}</n-text>
+            <n-text :type="getChangeType(idx.change)" strong style="margin-left:3px">{{ idx.lastPx?.toFixed(2) }}</n-text>
+            <n-text :type="getChangeType(idx.change)" strong style="margin-left:3px">{{ formatChange(idx.change) }}</n-text>
           </n-text>
         </template>
       </n-flex>
