@@ -144,10 +144,29 @@ const summary = computed(() => {
   return {totalJmr, totalRzye, totalRqye, upCount, downCount}
 })
 
+const dataDate = computed(() => {
+  if (!data.value.length) return ''
+  const ts = data.value[0].date
+  if (!ts) return ''
+  // 兼容秒级和毫秒级时间戳
+  const d = ts > 1e12 ? new Date(ts) : new Date(ts * 1000)
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+})
+
 async function fetchData() {
   loading.value = true
   try {
-    const res = await RzrqRank(activeType.value, sortKey.value, sortType.value, queryDate.value, length.value, 0)
+    let res = await RzrqRank(activeType.value, sortKey.value, sortType.value, queryDate.value, length.value, 0)
+    // 无数据时逐日回退，最多尝试前 7 天
+    if (!res?.list?.length) {
+      const baseTs = dateTs.value ?? Date.now()
+      for (let i = 1; i <= 7; i++) {
+        const d = new Date(baseTs - i * 24 * 60 * 60 * 1000)
+        const qDate = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+        res = await RzrqRank(activeType.value, sortKey.value, sortType.value, qDate, length.value, 0)
+        if (res?.list?.length) break
+      }
+    }
     data.value = res?.list || []
   } catch (e) {
     console.error('RzrqRank error:', e)
@@ -171,7 +190,14 @@ onMounted(() => {
 </script>
 
 <template>
-  <div style="padding: 8px;">
+  <n-card size="small" style="--wails-draggable:no-drag">
+    <template #header>
+      <n-flex align="center" :wrap="false">
+        <n-text strong>融资融券余额</n-text>
+        <n-text depth="3" style="font-size: 12px;">行业/概念/个股{{ dataDate ? ' · ' + dataDate : '' }}</n-text>
+      </n-flex>
+    </template>
+
     <n-flex align="center" :wrap="false" style="margin-bottom: 12px;" gap="12">
       <n-select v-model:value="activeType" :options="typeOptions" size="small"
                 style="width: 100px;" @update:value="onTypeChange"/>
@@ -212,10 +238,16 @@ onMounted(() => {
       :bordered="false"
       :single-line="false"
       size="small"
-      :max-height="600"
       :scroll-x="1800"
       :row-key="(r: any) => r.stockCode"
-      virtual-scroll
     />
-  </div>
+  </n-card>
 </template>
+
+<style scoped>
+:deep(.n-data-table-thead) {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+</style>
