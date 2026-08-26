@@ -47,6 +47,7 @@ const formValue = ref({
     sysPromptId: 0,
     enableTools: true,
     thinking: false,
+    memoryEnable: false,
     agentMode: 'react',
     status: 'stopped'
   },
@@ -78,7 +79,8 @@ const formValue = ref({
   enableAgent: false,
   qgqpBId: '',
   updateChannel: 'release',
-  promptPlazaApiBase: '',
+  // 广场服务地址固定（定制版不可修改）
+  promptPlazaApiBase: 'https://go-stock.sparkmemory.top/api',
 })
 
 const updateChannelOptions = [
@@ -117,6 +119,7 @@ onMounted(() => {
       sysPromptId: res.feishuBotSysPromptId || 0,
       enableTools: res.feishuBotEnableTools !== false,
       thinking: res.feishuBotThinking === true,
+      memoryEnable: res.feishuBotMemoryEnable === true,
       agentMode: res.feishuBotAgentMode || 'react',
       status: 'stopped'
     }
@@ -151,7 +154,8 @@ onMounted(() => {
     formValue.value.enableAgent = res.enableAgent;
     formValue.value.qgqpBId = res.qgqpBId;
     formValue.value.updateChannel = res.updateChannel || 'release';
-    formValue.value.promptPlazaApiBase = res.promptPlazaApiBase || '';
+    // 广场服务地址固定（定制版不可修改），后端 GetSettingConfig 始终返回固定值，此处兜底
+    formValue.value.promptPlazaApiBase = res.promptPlazaApiBase || 'https://go-stock.sparkmemory.top/api';
 
   })
 
@@ -180,6 +184,7 @@ function saveConfig() {
     feishuBotSysPromptId: formValue.value.feishuBot.sysPromptId,
     feishuBotEnableTools: formValue.value.feishuBot.enableTools,
     feishuBotThinking: formValue.value.feishuBot.thinking,
+    feishuBotMemoryEnable: formValue.value.feishuBot.memoryEnable,
     feishuBotAgentMode: formValue.value.feishuBot.agentMode,
     localPushEnable: formValue.value.localPush.enable,
     updateBasicInfoOnStart: formValue.value.updateBasicInfoOnStart,
@@ -205,7 +210,8 @@ function saveConfig() {
     enableAgent: formValue.value.enableAgent,
     qgqpBId: formValue.value.qgqpBId,
     updateChannel: formValue.value.updateChannel,
-    promptPlazaApiBase: formValue.value.promptPlazaApiBase,
+    // 广场服务地址固定值（后端 UpdateConfig 也会强制覆盖）
+    promptPlazaApiBase: 'https://go-stock.sparkmemory.top/api',
   })
 
   if (config.sponsorCode) {
@@ -390,6 +396,7 @@ function importConfig() {
         sysPromptId: config.feishuBotSysPromptId || 0,
         enableTools: config.feishuBotEnableTools !== false,
         thinking: config.feishuBotThinking === true,
+        memoryEnable: config.feishuBotMemoryEnable === true,
         agentMode: config.feishuBotAgentMode || 'react',
         status: formValue.value.feishuBot.status || 'stopped'
       }
@@ -635,7 +642,7 @@ function deletePrompt(ID) {
             </n-form-item-gi>
 
             <n-form-item-gi :span="11" label="提示词广场地址：" path="promptPlazaApiBase">
-              <n-input type="text" placeholder="http://go-stock.sparkmemory.top:1918/api" v-model:value="formValue.promptPlazaApiBase" clearable/>
+              <n-input type="text" v-model:value="formValue.promptPlazaApiBase" disabled/>
               <n-tooltip placement="top">
                 <template #trigger>
                   <n-icon color="#0e7a0d" size="20">
@@ -645,9 +652,7 @@ function deletePrompt(ID) {
                 <template #default>
                   <n-gradient-text :type="'warning'">
                   <div style="max-width: 400px;text-align: left">
-                    提示词广场服务接口地址<br>
-                    默认: http://go-stock.sparkmemory.top:1918/api<br>
-                    如已部署提示词广场服务，可修改为实际地址
+                    提示词广场服务接口地址（固定配置，不可修改）
                   </div>
                   </n-gradient-text>
                 </template>
@@ -752,6 +757,14 @@ function deletePrompt(ID) {
               <n-switch v-model:value="formValue.feishuBot.thinking"/>
               <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
                 推理模型启用后输出思考过程
+              </n-text>
+            </n-form-item-gi>
+
+            <n-form-item-gi :span="6" v-if="formValue.feishuBot.enable" label="多轮记忆"
+                            path="feishuBot.memoryEnable">
+              <n-switch v-model:value="formValue.feishuBot.memoryEnable"/>
+              <n-text depth="3" style="margin-left: 12px; font-size: 12px;">
+                开启后携带最近一轮对话上下文
               </n-text>
             </n-form-item-gi>
 
