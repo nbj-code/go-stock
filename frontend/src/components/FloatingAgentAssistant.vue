@@ -14,10 +14,10 @@
     </div>
   </Transition>
 
-  <Transition name="drawer-slide">
-    <div v-if="panelVisible" class="drawer-wrap">
-      <div class="drawer-mask" @click="closePanel" />
-      <div class="drawer-panel" @click.stop>
+  <!-- 右侧抽屉：常驻渲染（避免打开时挂载 DOM 卡顿），通过 class 切换滑入滑出 -->
+  <div :class="['drawer-wrap', { 'drawer-open': panelVisible }]">
+    <div class="drawer-mask" @click="closePanel" />
+    <div class="drawer-panel" @click.stop>
         <NCard
           size="small"
           class="panel-card"
@@ -277,9 +277,16 @@
                   />
                 </div>
               </div>
-              <div v-if="selectedSkillDir" class="chat-footer-skill-tag">
-                <NTag type="info" size="small" closable @close="clearSkill">
-                  🎯 {{ selectedSkillName }}
+              <div v-if="selectedSkills.length" class="chat-footer-skill-tag">
+                <NTag
+                  v-for="s in selectedSkills"
+                  :key="s.dirName"
+                  type="info"
+                  size="small"
+                  closable
+                  @close="removeSkill(s.dirName)"
+                >
+                  🎯 {{ s.name }}
                 </NTag>
               </div>
               <div class="chat-footer-input" style="position: relative;">
@@ -292,19 +299,20 @@
                     @click="skillMenuIndex = i; selectSkillFromMenu()"
                     @mouseenter="skillMenuIndex = i"
                   >
-                    <span class="skill-menu-name">🎯 {{ s.name }}</span>
+                    <span class="skill-menu-name">{{ isSkillSelected(s.dirName) ? '✅' : '🎯' }} {{ s.name }}</span>
                     <span class="skill-menu-desc">{{ s.description }}</span>
                   </div>
+                  <div class="skill-menu-footer">技能可多选：回车/点击 选择或取消，Esc 关闭菜单，发送时随消息一起提交</div>
                 </div>
                 <NInput
                   v-model:value="inputValue"
                   type="textarea"
-                  placeholder="输入消息，回车发送... 输入 / 选择技能"
+                  placeholder="输入消息，回车发送... 输入 / 选择技能（可多选，技能名随消息一起提交）"
                   :autosize="{ minRows: 2, maxRows: 4 }"
                   :disabled="isStreamLoad"
                   @update:value="checkSlashCommand"
                   @keydown="handleInputKeydown"
-                  @keydown.enter.exact.prevent="sendMessage"
+                  @keydown.enter.exact.prevent="onEnterKey"
                 />
                 <NButton
                   v-if="isStreamLoad"
@@ -328,7 +336,6 @@
         </NCard>
       </div>
     </div>
-  </Transition>
 
   <NModal
     v-model:show="klineModalShow"
@@ -408,7 +415,7 @@ import {
   GetConfig,
   GetFollowList,
   GetPromptTemplates,
-  GetSponsorInfo,
+  GetEffectiveSponsorVip,
   SaveAiAssistantSession,
   GetAiAssistantSession,
   ShareText,
@@ -481,14 +488,23 @@ const sysPromptOptions = computed(() =>
 )
 const sysPromptId = ref(null)
 
-// 技能选择（/ 斜杠指令）：选中技能后用技能 SKILL.md 内容覆盖系统提示词
+// 技能选择（/ 斜杠指令，支持多选）：选中技能后用技能 SKILL.md 内容覆盖系统提示词，
+// 同时技能名以 @技能名 标记追加到输入框，随消息文本一起提交，
+// 确保 DeepAgents 子 Agent 委派时也能感知用户指定的技能。
 const skills = ref([])
-const selectedSkillDir = ref('')
-const selectedSkillName = computed(() => {
-  if (!selectedSkillDir.value) return ''
-  const s = skills.value.find(x => x.dirName === selectedSkillDir.value)
-  return s ? s.name : ''
-})
+const selectedSkillDirs = ref([])
+const selectedSkills = computed(() =>
+  selectedSkillDirs.value
+    .map(d => skills.value.find(s => s.dirName === d))
+    .filter(Boolean)
+)
+function isSkillSelected(dirName) {
+  return selectedSkillDirs.value.includes(dirName)
+}
+// 技能名在输入框/提交文本中的标记格式
+function skillMarker(name) {
+  return '@' + name
+}
 // 技能菜单浮层状态
 const skillMenuVisible = ref(false)
 const skillMenuIndex = ref(0)
@@ -501,7 +517,7 @@ const filteredSkills = computed(() => {
     s.name.toLowerCase().includes(kw) || (s.description || '').toLowerCase().includes(kw)
   )
 })
-const sysPromptDisabled = computed(() => !!selectedSkillDir.value)
+const sysPromptDisabled = computed(() => selectedSkillDirs.value.length > 0)
 
 const userPromptTemplates = ref([])
 const userPromptOptions = computed(() =>
@@ -1266,12 +1282,16 @@ function closePanel() {
 }
 
 async function ensureVipInfo() {
-  if (vipLoaded.value || vipLoading.value) return
+  // 注意：不能缓存结果。改用 GetEffectiveSponsorVip（后端每次同步本地解密并判断有效期，无网络 IO），
+  // 旧方案读 GetSponsorInfo 依赖启动后台 goroutine（CheckUpdate）异步填充 SponsorInfo，
+  // 启动早期预加载会读到空值并把 vipLevel=0 固化，导致 VIP2 用户被误拦。
+  if (vipLoading.value) return
   vipLoading.value = true
   try {
-    const res = await GetSponsorInfo()
+    const res = await GetEffectiveSponsorVip()
     const lvl = Number(res?.vipLevel ?? 0)
-    vipLevel.value = Number.isNaN(lvl) ? 0 : lvl
+    const active = res?.active !== false
+    vipLevel.value = active && !Number.isNaN(lvl) ? lvl : 0
   } catch (_) {
     vipLevel.value = 0
   } finally {
@@ -1282,6 +1302,7 @@ async function ensureVipInfo() {
 
 async function togglePanel() {
   if (!panelVisible.value) {
+    // 每次打开前重新校验（后端为同步本地解密，微秒级，不影响打开速度）
     await ensureVipInfo()
     if ((vipLevel.value ?? 0) < 2) {
       message.warning('go-stock AI Agent 助手功能仅对 VIP2 及以上赞助用户开放，请前往关于页面查看赞助方式。')
@@ -1303,11 +1324,19 @@ function sendMessage() {
   if (isStreamLoad.value) {
     abortStream(false)
   }
-  const text = inputValue.value.trim()
+  let text = inputValue.value.trim()
   if (!text) {
     message.warning('请输入你的问题')
     return
   }
+  // 已选技能名（@技能名 标记）随消息文本一起提交；缓存恢复场景输入框可能没有标记，此处补齐
+  const missingMarkers = selectedSkills.value
+    .map(s => skillMarker(s.name))
+    .filter(m => !text.includes(m))
+  if (missingMarkers.length) {
+    text = missingMarkers.join(' ') + ' ' + text
+  }
+  skillMenuVisible.value = false
 
   messages.value.push({
     role: 'user',
@@ -1348,7 +1377,7 @@ function sendMessage() {
     }
     scrollToBottom()
   })
-  ChatWithAgent(text, configId, selectedSkillDir.value ? null : sysPromptId.value, memoryMode.value, memoryCount.value, thinkingMode.value, agentMode.value === 'auto' ? '' : agentMode.value, sessionId.value, selectedSkillDir.value)
+  ChatWithAgent(text, configId, selectedSkillDirs.value.length ? null : sysPromptId.value, memoryMode.value, memoryCount.value, thinkingMode.value, agentMode.value === 'auto' ? '' : agentMode.value, sessionId.value, selectedSkillDirs.value.join(','))
 }
 
 function startNewChat() {
@@ -1672,29 +1701,41 @@ function loadPromptTemplates() {
   })
 }
 
-// 加载技能列表并恢复缓存选择（与技能管理页面同源：文件系统技能）
+// 加载技能列表并恢复缓存选择（与技能管理页面同源：文件系统技能，支持多选）。
+// 停用技能（技能管理页开关关闭）不进入可选列表，已选中的停用技能会被自动移除。
 function loadSkills() {
   ListFilesystemSkills().then(res => {
-    skills.value = Array.isArray(res) ? res : []
-    if (!selectedSkillDir.value) {
+    skills.value = (Array.isArray(res) ? res : []).filter(s => !s.disabled)
+    // 已选技能中若有被停用的，自动移除并同步持久化
+    if (selectedSkillDirs.value.length) {
+      const valid = selectedSkillDirs.value.filter(d => skills.value.some(s => s.dirName === d))
+      if (valid.length !== selectedSkillDirs.value.length) {
+        selectedSkillDirs.value = valid
+        persistSkills()
+      }
+    }
+    if (!selectedSkillDirs.value.length) {
       const cached = localStorage.getItem(STORAGE_KEY_SKILL_ID)
-      if (cached && skills.value.some(s => s.dirName === cached)) {
-        selectedSkillDir.value = cached
+      if (cached) {
+        const dirs = cached.split(',').filter(d => skills.value.some(s => s.dirName === d))
+        if (dirs.length) selectedSkillDirs.value = dirs
       }
     }
   }).catch(() => {})
 }
 
-// 清除已选技能
-function clearSkill() {
-  selectedSkillDir.value = ''
-  localStorage.removeItem(STORAGE_KEY_SKILL_ID)
+// 持久化已选技能（逗号分隔，支持多选）
+function persistSkills() {
+  if (selectedSkillDirs.value.length) {
+    localStorage.setItem(STORAGE_KEY_SKILL_ID, selectedSkillDirs.value.join(','))
+  } else {
+    localStorage.removeItem(STORAGE_KEY_SKILL_ID)
+  }
 }
 
-// 检测输入框内容是否为 / 斜杠指令
+// 检测输入框内容是否为 / 斜杠指令（匹配最后一个 / 开头的词，便于在已选技能标记后继续追加）
 function checkSlashCommand(val) {
-  // 匹配：行首 / 后跟可选过滤词（不含空格）
-  const m = val.match(/^\s*\/([^\s]*)$/)
+  const m = val.match(/(?:^|\s)\/([^\s]*)$/)
   if (m) {
     skillFilterText.value = m[1]
     skillMenuVisible.value = true
@@ -1724,16 +1765,54 @@ function handleInputKeydown(e) {
   }
 }
 
-// 从浮层选中技能
+// 回车发送守卫：技能菜单打开时回车用于选择技能（多选），不发送消息
+function onEnterKey() {
+  if (skillMenuVisible.value && filteredSkills.value.length > 0) {
+    return
+  }
+  sendMessage()
+}
+
+// 从浮层选中/取消技能（可多选）：技能名以 @技能名 追加到输入框，随消息一起提交
 function selectSkillFromMenu() {
   const skill = filteredSkills.value[skillMenuIndex.value]
   if (!skill) return
-  selectedSkillDir.value = skill.dirName
-  localStorage.setItem(STORAGE_KEY_SKILL_ID, skill.dirName)
-  // 移除输入框中的 /xxx 文本
-  inputValue.value = inputValue.value.replace(/^\s*\/[^\s]*\s*/, '')
-  skillMenuVisible.value = false
-  showHint(`已选择技能「${skill.name}」，将忽略系统提示词`)
+  if (isSkillSelected(skill.dirName)) {
+    removeSkill(skill.dirName)
+    return
+  }
+  // 先移除输入框末尾的 /xxx 过滤词，再追加技能名标记
+  inputValue.value = inputValue.value.replace(/(?:^|\s)\/[^\s]*$/, '')
+  selectedSkillDirs.value.push(skill.dirName)
+  persistSkills()
+  // 技能名追加到输入框，作为提示随消息一起提交
+  const marker = skillMarker(skill.name)
+  if (!inputValue.value.includes(marker)) {
+    inputValue.value = (inputValue.value ? inputValue.value.trimEnd() + ' ' : '') + marker + ' '
+  }
+  // 菜单保持打开便于继续多选
+  skillFilterText.value = ''
+  skillMenuIndex.value = 0
+  skillMenuVisible.value = true
+  showHint(`已选择技能「${skill.name}」，技能名已加入输入框，将随消息一起提交`)
+}
+
+// 移除已选技能：同步删除输入框中对应的 @技能名 标记
+function removeSkill(dirName) {
+  const idx = selectedSkillDirs.value.indexOf(dirName)
+  if (idx < 0) return
+  selectedSkillDirs.value.splice(idx, 1)
+  persistSkills()
+  const s = skills.value.find(x => x.dirName === dirName)
+  if (s) {
+    const marker = skillMarker(s.name)
+    // 删除标记及其后跟随的多余空格（技能名做正则转义，避免特殊字符干扰）
+    const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    inputValue.value = inputValue.value
+      .replace(new RegExp(escaped + '\\s*', 'g'), '')
+      .replace(/\s{2,}/g, ' ')
+      .trimStart()
+  }
 }
 
 watch(panelVisible, (v) => {
@@ -1752,6 +1831,8 @@ onBeforeMount(() => {
 
 onMounted(() => {
   EventsOn(AGENT_EVENT, onAgentMessage)
+  // 预加载技能列表，首次点击打开抽屉时无需等待（VIP 校验须在打开时实时获取，见 ensureVipInfo）
+  loadSkills()
   loadHistory()
   GetAiConfigs().then(res => {
     const list = Array.isArray(res) ? res : []
@@ -1861,11 +1942,18 @@ onBeforeUnmount(() => {
   50% { opacity: 0.5; }
 }
 
+/* 抽屉容器：常驻渲染，关闭态隐藏且不响应交互，打开时瞬时可见 */
 .drawer-wrap {
   position: fixed;
   inset: 0;
   z-index: 9999;
   pointer-events: none;
+  visibility: hidden;
+  transition: visibility 0s 0.25s;
+}
+.drawer-wrap.drawer-open {
+  visibility: visible;
+  transition: visibility 0s;
 }
 .drawer-wrap > * {
   pointer-events: auto;
@@ -1875,6 +1963,11 @@ onBeforeUnmount(() => {
   inset: 0;
   background: rgba(0, 0, 0, 0.35);
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.drawer-wrap.drawer-open .drawer-mask {
+  opacity: 1;
 }
 .drawer-panel {
   position: absolute;
@@ -1889,6 +1982,11 @@ onBeforeUnmount(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+}
+.drawer-wrap.drawer-open .drawer-panel {
+  transform: translateX(0);
 }
 
 .panel-card {
@@ -2452,6 +2550,9 @@ onBeforeUnmount(() => {
 }
 .chat-footer-skill-tag {
   padding: 0 2px 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 .skill-menu {
   position: absolute;
@@ -2498,6 +2599,19 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.skill-menu-footer {
+  position: sticky;
+  bottom: 0;
+  padding: 5px 12px;
+  font-size: 11px;
+  opacity: .65;
+  background: #f5f5f7;
+  border-top: 1px solid #e0e0e6;
+}
+.skill-menu.dark .skill-menu-footer {
+  background: #202024;
+  border-top-color: #333;
+}
 .chat-footer-input {
   display: flex;
   gap: 8px;
@@ -2524,31 +2638,6 @@ onBeforeUnmount(() => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
-}
-
-.drawer-slide-enter-active .drawer-mask,
-.drawer-slide-leave-active .drawer-mask {
-  transition: opacity 0.25s ease;
-}
-.drawer-slide-enter-active .drawer-panel,
-.drawer-slide-leave-active .drawer-panel {
-  transition: transform 0.25s ease;
-}
-.drawer-slide-enter-from .drawer-mask,
-.drawer-slide-leave-to .drawer-mask {
-  opacity: 0;
-}
-.drawer-slide-enter-from .drawer-panel,
-.drawer-slide-leave-to .drawer-panel {
-  transform: translateX(100%);
-}
-.drawer-slide-enter-to .drawer-mask,
-.drawer-slide-leave-from .drawer-mask {
-  opacity: 1;
-}
-.drawer-slide-enter-to .drawer-panel,
-.drawer-slide-leave-from .drawer-panel {
-  transform: translateX(0);
 }
 </style>
 
