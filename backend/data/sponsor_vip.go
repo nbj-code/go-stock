@@ -10,15 +10,20 @@ import (
 	"time"
 	"unicode"
 
+	"go-stock/backend/logger"
+
 	"github.com/duke-git/lancet/v2/convertor"
 	"github.com/duke-git/lancet/v2/cryptor"
-	"go-stock/backend/logger"
 )
 
 // DefaultSponsorAESKeyHex 占位密钥，仅用于社区自行编译、未注入正式密钥的场景：
 // 正式密钥必须通过构建期 ldflags（-X main.BuildKey=...）注入，不落在仓库里。
 // 未注入时赞助码解密必然失败，因此启动日志会给出明确告警（见 main.checkDir）。
 const DefaultSponsorAESKeyHex = "cc1e0d684e32f176c56ff1fcf384dcd9"
+
+// IsAllFree 决定了是否屏蔽所有 VIP 验证。
+// 设置为 true 时，程序将视为所有功能均为免费开启状态。
+var IsAllFree = true
 
 // SponsorDecryptKeyHex 由主程序在启动时同步为 ldflags 注入的 BuildKey；为空则使用 DefaultSponsorAESKeyHex。
 var SponsorDecryptKeyHex string
@@ -143,6 +148,15 @@ func parseSponsorTime(v any) (t time.Time, ok bool) {
 // 服务端按东八区写入，若按 time.Local 解析，非东八区的机器（如时区为 UTC / 美西的 macOS）
 // 会把发码时刻算到未来，误判为"尚未生效"，出现"验证通过但 VIP 用不了"。
 func EvaluateSponsorVipInfo(info map[string]any) SponsorVipStatus {
+	// --- 修改点：如果开启了全开模式，直接返回最高等级的 VIP 状态 ---
+	if IsAllFree {
+		return SponsorVipStatus{
+			Level:  99, // 给一个足够大的数字代表“全开”
+			Active: true,
+			User:   "Free Mode",
+		}
+	}
+
 	return evaluateSponsorVip(info, time.Now())
 }
 
@@ -178,6 +192,11 @@ func evaluateSponsorVip(info map[string]any, now time.Time) SponsorVipStatus {
 
 // EffectiveSponsorVipStatus 解密本地配置中的赞助码并返回完整判定结果（含未生效原因）。
 func EffectiveSponsorVipStatus() SponsorVipStatus {
+	// 全开模式（IsAllFree）：未配置赞助码时原本会提前返回"未配置赞助码"，
+	// 绕过 EvaluateSponsorVipInfo 的拦截，因此必须在此处先行放行。
+	if IsAllFree {
+		return SponsorVipStatus{Level: 99, Active: true, User: "Free Mode"}
+	}
 	sponsorCode := strings.TrimSpace(GetSettingConfig().SponsorCode)
 	if sponsorCode == "" {
 		return SponsorVipStatus{Reason: "未配置赞助码"}

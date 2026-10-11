@@ -275,6 +275,15 @@ func (a *App) CheckSponsorCode(sponsorCode string) map[string]any {
 }
 
 func (a *App) CheckUpdate(flag int) {
+	// 全开模式（IsAllFree）下屏蔽所有更新检查：
+	// 拦截启动自动检查、每日 8/12/20 点定时检查、以及前端手动检查三条路径。
+	// 手动检查（flag==1）时向前端推送"无更新"，避免界面停留在"正在检查"状态。
+	if data.IsAllFree {
+		if flag == 1 && a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "updateCheckDone", map[string]any{"hasUpdate": false})
+		}
+		return
+	}
 	// 手动检查（flag==1）时向前端持续反馈进度。
 	// GitHub API 与代理测速在国内网络下可能耗时数十秒，若中间状态不推送，
 	// 界面从点击到出结果之间会完全没有响应。
@@ -676,6 +685,11 @@ func (a *App) downloadUpdate(url string, tmpPath string, totalSize int64, downlo
 }
 
 func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *models.GitHubReleaseVersion) (string, string, bool) {
+	// 全开模式（IsAllFree）：直接返回最高等级 VIP，跳过赞助码解密与有效期判定。
+	// CheckUpdate 已被同一开关拦截，downloadUrl 不会被使用，返回空即可。
+	if data.IsAllFree {
+		return "Free Mode", "99", true
+	}
 	isVip := false
 	vipLevel := "0"
 	sponsorCode = strutil.Trim(a.GetConfig().SponsorCode)
