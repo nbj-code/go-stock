@@ -280,6 +280,9 @@ func GetAllDataTools() []tool.BaseTool {
 	// 币安 USDT-M 永续合约（加密资产）：与 OpenAI 直连同名工具复用 data 层纯函数
 	tools = append(tools, GetBinanceFuturesTools()...)
 
+	// OKX（欧易）交易：账户/持仓/订单 + 下单/撤单，需在设置页配置凭证
+	tools = append(tools, GetOKXTools()...)
+
 	tools = append(tools, NewDataToolWrapper(
 		"FilterStocks",
 		"根据技术指标或者关注排名或者连涨/连跌跌天数筛选股票。支持多种K线形态和技术指标条件筛选，如MACD金叉、KDJ金叉、均线排列、K线形态，人气，关注排名，连涨/连跌跌天数等。",
@@ -922,7 +925,7 @@ func GetAllDataTools() []tool.BaseTool {
 			var md strings.Builder
 			md.WriteString("### 最近新闻资讯（共 " + convertor.ToString(total) + " 条，本页 " + convertor.ToString(len(*list)) + " 条）\r\n")
 			for _, d := range *list {
-				md.WriteString(d.DataTime.Format(time.DateTime) + " " + d.Content + "\r\n")
+				md.WriteString(d.DataTime.Format(time.DateTime) + " " + stripHTMLForAI(d.Content) + "\r\n")
 			}
 			return md.String(), nil
 		},
