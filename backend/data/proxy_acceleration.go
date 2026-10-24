@@ -15,15 +15,18 @@ import (
 	"go-stock/backend/logger"
 )
 
+// nodesSourceURL 代理节点列表来源。直连 raw.githubusercontent.com 在国内多数网络下不可达或极慢，
+// 改走自建反代 proxy.sparkmemory.top/gh/。
 const (
-	nodesSourceURL   = "https://raw.githubusercontent.com/oopsunix/ghproxy-next/main/components/nodes.ts"
+	nodesSourceURL   = "https://proxy.sparkmemory.top/gh/https://raw.githubusercontent.com/oopsunix/ghproxy-next/main/components/nodes.ts"
 	proxyTestBytes   = 2 * 1024 * 1024
 	proxyTestTimeout = 15 * time.Second
-	proxyTestTopN    = 20
+	proxyTestTopN    = 25
 	proxyConcurrency = 10
 )
 
 var hardcodedProxies = []string{
+	"jiashu.1win.eu.org", // 自建反代（2026-10 验证可用，支持 Range/206），测速竞速自动择优
 	"github.starrlzy.cn", "ghproxy.net", "gh-proxy.com",
 	"github-proxy.memory-echoes.cn", "github.dpik.top", "gh.tryxd.cn",
 	"github.tbap.top", "j.1win.ggff.net", "ghfile.geekertao.top",

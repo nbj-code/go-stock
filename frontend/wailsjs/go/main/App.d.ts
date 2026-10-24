@@ -421,6 +421,8 @@ export function GetOKXPositionList(arg1:string):Promise<Array<data.OKXPosition>>
 
 export function GetOKXPositionListEnv(arg1:boolean,arg2:string):Promise<Array<data.OKXPosition>>;
 
+export function GetOKXPositionTPSLEnv(arg1:boolean):Promise<Array<data.OKXPositionTPSLView>>;
+
 export function GetOKXRankings(arg1:string,arg2:number):Promise<Array<data.OKXRankItem>>;
 
 export function GetOKXTradingOverview():Promise<main.OKXTradingOverview>;
@@ -430,6 +432,8 @@ export function GetOKXTradingOverviewEnv(arg1:boolean):Promise<main.OKXTradingOv
 export function GetOKXWallet():Promise<data.OKXBalance>;
 
 export function GetOKXWalletEnv(arg1:boolean):Promise<data.OKXBalance>;
+
+export function GetOkxInstruments():Promise<Array<data.OKXInstrument>>;
 
 export function GetPolicyNews(arg1:string,arg2:number):Promise<any>;
 
@@ -654,6 +658,8 @@ export function RemoveStockGroup(arg1:string,arg2:string,arg3:number):Promise<st
 export function RenameAiAssistantSession(arg1:string,arg2:string):Promise<void>;
 
 export function ResetHotMoneySeats():Promise<void>;
+
+export function RestartApp():Promise<void>;
 
 export function RestartAsAdmin():Promise<void>;
 

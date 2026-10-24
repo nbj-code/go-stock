@@ -3343,6 +3343,46 @@ export namespace data {
 	        this.uTime = source["uTime"];
 	    }
 	}
+	export class OKXPositionTPSLView {
+	    instId: string;
+	    posSide: string;
+	    mode: string;
+	    roi: number;
+	    hasTp: boolean;
+	    tpLine: number;
+	    distTp: number;
+	    tpPx: number;
+	    hasSl: boolean;
+	    slLine: number;
+	    distSl: number;
+	    slPx: number;
+	    trailArmed: boolean;
+	    trailLine: number;
+	    trailPx: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new OKXPositionTPSLView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.instId = source["instId"];
+	        this.posSide = source["posSide"];
+	        this.mode = source["mode"];
+	        this.roi = source["roi"];
+	        this.hasTp = source["hasTp"];
+	        this.tpLine = source["tpLine"];
+	        this.distTp = source["distTp"];
+	        this.tpPx = source["tpPx"];
+	        this.hasSl = source["hasSl"];
+	        this.slLine = source["slLine"];
+	        this.distSl = source["distSl"];
+	        this.slPx = source["slPx"];
+	        this.trailArmed = source["trailArmed"];
+	        this.trailLine = source["trailLine"];
+	        this.trailPx = source["trailPx"];
+	    }
+	}
 	export class OKXRankItem {
 	    instId: string;
 	    base: string;
@@ -3543,6 +3583,9 @@ export namespace data {
 	    okxSignalTradeInstType: string;
 	    okxSignalTradeLever: string;
 	    okxSignalTradeKlts: string;
+	    okxSignalTradeDirMode: string;
+	    okxSignalTradeRegime: boolean;
+	    okxSignalTradeMaxPerDay: string;
 	    okxSignalStockEnable: boolean;
 	    okxSignalStockUSDT: string;
 	    okxTpSlEnable: boolean;
@@ -3557,6 +3600,7 @@ export namespace data {
 	    qgqpBId: string;
 	    iwencaiApiKey: string;
 	    emApiKey: string;
+	    deepSeekSearchApiKey: string;
 	    windowWidth: number;
 	    windowHeight: number;
 	    promptPlazaApiBase: string;
@@ -3636,6 +3680,9 @@ export namespace data {
 	        this.okxSignalTradeInstType = source["okxSignalTradeInstType"];
 	        this.okxSignalTradeLever = source["okxSignalTradeLever"];
 	        this.okxSignalTradeKlts = source["okxSignalTradeKlts"];
+	        this.okxSignalTradeDirMode = source["okxSignalTradeDirMode"];
+	        this.okxSignalTradeRegime = source["okxSignalTradeRegime"];
+	        this.okxSignalTradeMaxPerDay = source["okxSignalTradeMaxPerDay"];
 	        this.okxSignalStockEnable = source["okxSignalStockEnable"];
 	        this.okxSignalStockUSDT = source["okxSignalStockUSDT"];
 	        this.okxTpSlEnable = source["okxTpSlEnable"];
@@ -3650,6 +3697,7 @@ export namespace data {
 	        this.qgqpBId = source["qgqpBId"];
 	        this.iwencaiApiKey = source["iwencaiApiKey"];
 	        this.emApiKey = source["emApiKey"];
+	        this.deepSeekSearchApiKey = source["deepSeekSearchApiKey"];
 	        this.windowWidth = source["windowWidth"];
 	        this.windowHeight = source["windowHeight"];
 	        this.promptPlazaApiBase = source["promptPlazaApiBase"];
