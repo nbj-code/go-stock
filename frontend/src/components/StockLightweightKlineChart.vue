@@ -4,6 +4,7 @@ import { EventsEmit } from '../../wailsjs/runtime'
 import {
   CandlestickSeries,
   createChart,
+  createSeriesMarkers,
   HistogramSeries,
   LineSeries,
   LineStyle,
@@ -26,6 +27,7 @@ import {
   biasValues, candlePatternsValues, rsValues,
 } from './kline/calc'
 import { makeToggle } from './kline/indicators/toggle'
+import { reversalSignals } from './kline/reversal'
 import { parseNumStr, formatPrice2, formatVolumeCn, formatAmountCn, formatPctField, formatSigned2, priceDecimalsFor } from './kline/format'
 import { createMeasurePrimitive } from './kline/measurePrimitive'
 import { createWavePrimitive } from './kline/wavePrimitive'
@@ -35,6 +37,7 @@ import { createDivergencePrimitive } from './kline/divergencePrimitive'
 import { createBuySellPrimitive } from './kline/buySellPrimitive'
 import { createTemaTurnPrimitive } from './kline/temaTurnPrimitive'
 import { createMassZonePrimitive, massAdaptiveThresholds } from './kline/massZonePrimitive'
+import { createSmiZonePrimitive } from './kline/smiZonePrimitive'
 import { createDrawingHost, DRAWING_TOOLS } from './kline/drawingManagerHost'
 import { extractOHLCV } from './kline/bars'
 import { resolveStockName } from './kline/stockName'
@@ -424,6 +427,10 @@ const showSMC = ref(false)
 const showBias = ref(false)
 /** K线形态识别（主图打点：吞没/锤头/启明星/红三兵等） */
 const showCandlePatterns = ref(false)
+const showFalseBreak = ref(false)
+const showRsiSwing = ref(false)
+const showExhaustion = ref(false)
+const showDoubleReversal = ref(false)
 /** RS 相对强度（个股/基准指数，副图双线） */
 const showRS = ref(false)
 /** 获利盘比例（筹码分布派生副图曲线） */
@@ -448,7 +455,7 @@ const showWeisWave = ref(false)
 const showBuySell = ref(false)
 /** 出现新的买卖点时播放提示音（默认开；仅「买卖点」开启时生效） */
 const buySellAlertSound = ref(true)
-/** 买卖点共振阈值：4=灵敏 6=标准 7=严格（等权计数制：命中的信号路数需 >= 该值，满分 14） */
+/** 买卖点共振阈值：4=灵敏 6=标准 7=严格（等权计数制：命中的信号路数需 >= 该值，满分 15） */
 const buySellMinScore = ref(6)
 const buySellScoreLabel = computed(
   () => BUY_SELL_SCORE_OPTIONS.find(o => o.value === buySellMinScore.value)?.label || '标准',
@@ -472,6 +479,7 @@ const PERSISTED_INDICATOR_REFS = [
   showBias, showCandlePatterns, showRS, showChipProfit, showMtfScore,
   showChip, showVolumeProfile, showTDSequential, showBBI, showLimitLines,
   showDivergence, showWeisWave, showBuySell, showTemaTurn, buySellAlertSound, temaTurnAlertSound,
+  showFalseBreak, showRsiSwing, showExhaustion, showDoubleReversal,
 ]
 const PERSISTED_INDICATOR_KEYS = [
   'showMA', 'showBOLL', 'showOBV', 'showMACD', 'showKDJ', 'showRSI', 'showATR', 'showVWAP',
@@ -485,6 +493,7 @@ const PERSISTED_INDICATOR_KEYS = [
   'showBias', 'showCandlePatterns', 'showRS', 'showChipProfit', 'showMtfScore',
   'showChip', 'showVolumeProfile', 'showTDSequential', 'showBBI', 'showLimitLines',
   'showDivergence', 'showWeisWave', 'showBuySell', 'showTemaTurn', 'buySellAlertSound', 'temaTurnAlertSound',
+  'showFalseBreak', 'showRsiSwing', 'showExhaustion', 'showDoubleReversal',
 ]
 const PERSISTED_KLT_SET = new Set(INTERVALS.map(it => it.klt))
 
@@ -504,7 +513,7 @@ function loadIndicatorSettings() {
     if (typeof data.divergenceSource === 'string' && ['rsi', 'macd', 'kdj'].includes(data.divergenceSource)) {
       divergenceSource.value = data.divergenceSource
     }
-    // 买卖点共振阈值（14 路等权制 4/6/7）；旧档值不在新档位时落默认「标准 6」——
+    // 买卖点共振阈值（15 路等权制 4/6/7）；旧档值不在新档位时落默认「标准 6」——
     // 旧加权制 2/3/4 一次性 +1 迁移（2→3、3→4、4→5）；旧 9/10 路 3/5 落默认、4 语义由「标准」变「灵敏」
     if (BUY_SELL_SCORE_OPTIONS.some(o => o.value === data.buySellMinScore)) {
       buySellMinScore.value = data.buySellMinScore
@@ -576,6 +585,10 @@ let tdSequentialPrimitive = null
 let massZonePrimitive = null
 /** Mass 反转窗口数据缓存（按 mergedRawRowsVersion 失效） */
 const massZoneCache = { version: -1, data: null }
+/** 「SMI 底部/顶部区域」primitive 实例（主图半透明竖带） */
+let smiZonePrimitive = null
+/** SMI 区域数据缓存（按 mergedRawRowsVersion 失效） */
+const smiZoneCache = { version: -1, data: null }
 /** 九转计数缓存（按 mergedRawRowsVersion 失效） */
 const tdSequentialCache = { version: -1, counts: null }
 /** 九转用的 OHLCV 缓存（复用 VPVR 缓存格式） */
@@ -605,6 +618,7 @@ const buySellBarsCache = { version: -1, data: null }
 const buySellAlertState = { ready: false, ctx: '', buy: null, sell: null }
 /** 「TEMA 斜率转折」primitive 实例（主图预警/确认标记，独立于买卖点体系） */
 let temaTurnPrimitive = null
+let reversalMarkers = null
 /** TEMA 转折点检测结果缓存（按 mergedRawRowsVersion + 周期失效） */
 const temaTurnCache = { version: -1, klt: '', data: null }
 /**
@@ -2056,6 +2070,8 @@ function syncIndicators() {
   syncTDSequentialPrimitive()
   // Mass Index 反转窗口为 primitive（主图竖带），随 Mass 开关同步
   syncMassZonePrimitive()
+  // SMI 底部/顶部区域为 primitive（主图竖带），随 SMI 开关同步
+  syncSMIZonePrimitive()
   // 自动背离为 primitive（主图连线+徽章），单独同步
   syncDivergencePrimitive()
   // 买卖点预测为 primitive（主图箭头标注），单独同步
@@ -2067,6 +2083,7 @@ function syncIndicators() {
   syncLimitPriceLines()
 
   const { times, opens, closes, highs, lows, vols, days } = extractOHLCV(mergedRawRows)
+  syncReversalMarkers({ times, opens, closes, highs, lows, vols })
   if (!times.length) {
     ind.ma5 = removeSeriesSafe(ind.ma5)
     ind.ma10 = removeSeriesSafe(ind.ma10)
@@ -2811,6 +2828,32 @@ function syncIndicators() {
   }
 
   syncSubPaneIndicators(times, closes, highs, lows, vols, days)
+}
+
+function syncReversalMarkers(bars) {
+  const enabled = {
+    falseBreak: showFalseBreak.value,
+    rsiSwing: showRsiSwing.value,
+    exhaustion: showExhaustion.value,
+    double: showDoubleReversal.value,
+  }
+  if (!Object.values(enabled).some(Boolean)) {
+    if (reversalMarkers) reversalMarkers.detach()
+    reversalMarkers = null
+    return
+  }
+  const names = { falseBreak: '假破', rsiSwing: 'RSI摆', exhaustion: '衰竭', double: '双底顶' }
+  const phases = { warning: '预', confirm: '确', invalid: '失' }
+  const events = reversalSignals(bars, enabled.rsiSwing ? rsiBundle(bars.closes) : [], enabled)
+  const markers = events.map(event => ({
+    time: bars.times[event.index],
+    position: event.direction === 'bull' ? 'belowBar' : 'aboveBar',
+    color: event.phase === 'invalid' ? '#9ca3af' : event.direction === 'bull' ? CLR_RISE : CLR_FALL,
+    shape: event.phase === 'confirm' ? (event.direction === 'bull' ? 'arrowUp' : 'arrowDown') : 'circle',
+    text: `${names[event.type]}${phases[event.phase]}`,
+  }))
+  if (!reversalMarkers) reversalMarkers = createSeriesMarkers(candleSeries, markers)
+  else reversalMarkers.setMarkers(markers)
 }
 
 function formatCrosshairTime(time) {
@@ -4056,6 +4099,37 @@ function syncMassZonePrimitive() {
   }
 }
 
+// ===== SMI 底部/顶部区域（主图叠加 primitive）=====
+
+/** SMI 区域数据 getter：带版本缓存（times + SMI/Signal 序列 + 高低价），阈值/区间/买卖点由 primitive 内部按历史分布自适应 */
+function getSMIZoneData() {
+  if (smiZoneCache.version !== mergedRawRowsVersion.value) {
+    const { times, highs, lows, closes } = extractOHLCV(mergedRawRows)
+    const { smi, signal } = smiValues(highs, lows, closes)
+    smiZoneCache.data = { times, smi, signal, highs, lows }
+    smiZoneCache.version = mergedRawRowsVersion.value
+  }
+  return smiZoneCache.data
+}
+
+function ensureSMIZonePrimitive() {
+  if (smiZonePrimitive || !candleSeries) return
+  smiZonePrimitive = createSmiZonePrimitive(candleSeries, getSMIZoneData)
+}
+
+/** SMI 开启时在主图标注历史底部/顶部区域竖带；关闭时卸载 */
+function syncSMIZonePrimitive() {
+  if (showSMI.value) {
+    ensureSMIZonePrimitive()
+    smiZonePrimitive?.requestRedraw()
+  } else if (smiZonePrimitive) {
+    if (candleSeries) {
+      try { candleSeries.detachPrimitive(smiZonePrimitive) } catch { /* ignore */ }
+    }
+    smiZonePrimitive = null
+  }
+}
+
 // ===== BBI 多空指标（主图叠加线）=====
 
 function clearBBISeries() {
@@ -5238,6 +5312,10 @@ function disposeChart() {
       try { candleSeries.detachPrimitive(massZonePrimitive) } catch { /* ignore */ }
     }
     massZonePrimitive = null
+    if (smiZonePrimitive && candleSeries) {
+      try { candleSeries.detachPrimitive(smiZonePrimitive) } catch { /* ignore */ }
+    }
+    smiZonePrimitive = null
     if (divergencePrimitive && candleSeries) {
       try { candleSeries.detachPrimitive(divergencePrimitive) } catch { /* ignore */ }
     }
@@ -5250,6 +5328,8 @@ function disposeChart() {
       try { candleSeries.detachPrimitive(temaTurnPrimitive) } catch { /* ignore */ }
     }
     temaTurnPrimitive = null
+    if (reversalMarkers) reversalMarkers.detach()
+    reversalMarkers = null
     if (bbiSeries) {
       try { chart.removeSeries(bbiSeries) } catch { /* ignore */ }
     }
@@ -5725,6 +5805,10 @@ const toggleSignalRatio = makeToggle(showSignalRatio, syncIndicators)
 const toggleSMC = makeToggle(showSMC, syncIndicators)
 const toggleBias = makeToggle(showBias, syncIndicators)
 const toggleCandlePatterns = makeToggle(showCandlePatterns, syncIndicators)
+const toggleFalseBreak = makeToggle(showFalseBreak, syncIndicators)
+const toggleRsiSwing = makeToggle(showRsiSwing, syncIndicators)
+const toggleExhaustion = makeToggle(showExhaustion, syncIndicators)
+const toggleDoubleReversal = makeToggle(showDoubleReversal, syncIndicators)
 const toggleRS = makeToggle(showRS, syncIndicators)
 const toggleChipProfit = makeToggle(showChipProfit, syncIndicators)
 const toggleMtfScore = makeToggle(showMtfScore, syncIndicators)
@@ -6224,6 +6308,30 @@ watch(showLongPosition, (newVal) => {
             <div class="lw-kline-sidebar__section">
               <NText depth="3" style="font-size: 13px; font-weight: 700; display: block; margin-bottom: 4px; padding: 2px 6px; background: rgba(234,88,12,0.08); border-radius: 4px; border-left: 3px solid #ea580c; color: #c2410c">🔄反转</NText>
               <div class="lw-kline-sidebar__group">
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showFalseBreak ? 'primary' : 'default'" :secondary="!showFalseBreak" @click="toggleFalseBreak">假突破</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.falseBreak }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showRsiSwing ? 'primary' : 'default'" :secondary="!showRsiSwing" @click="toggleRsiSwing">RSI摆动</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.rsiSwing }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showExhaustion ? 'primary' : 'default'" :secondary="!showExhaustion" @click="toggleExhaustion">衰竭量</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.exhaustion }}</span>
+                </NTooltip>
+                <NTooltip :delay="500" placement="right-start">
+                  <template #trigger>
+                    <NButton size="tiny" :type="showDoubleReversal ? 'primary' : 'default'" :secondary="!showDoubleReversal" @click="toggleDoubleReversal">双底顶</NButton>
+                  </template>
+                  <span style="display: block; white-space: pre-line; text-align: left">{{ indicatorTips.doubleReversal }}</span>
+                </NTooltip>
                 <NTooltip :delay="500" placement="right-start">
                   <template #trigger>
                     <NButton size="tiny" :type="showTDSequential ? 'primary' : 'default'" :secondary="!showTDSequential" @click="toggleTDSequential">九转</NButton>

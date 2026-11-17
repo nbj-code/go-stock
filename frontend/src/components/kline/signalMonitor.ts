@@ -37,7 +37,7 @@ import {
   NotifySignal,
   SaveSignalRecords,
 } from '../../../wailsjs/go/main/App'
-import { buySellPointsValues, temaTurnPointsValues, hullTurnPointsValues, BUY_SELL_MAX_SCORE } from './calc'
+import { buySellPointsValues, temaTurnPointsValues, hullTurnPointsValues, BUY_SELL_MAX_SCORE, BUY_SELL_ROUTES } from './calc'
 import { runOkxTrendScan, scanOneTrend } from './okxTrendScanner'
 import { extractOHLCV } from './bars'
 import { BUY_SELL_SCORE_OPTIONS, CN_TZ, DAILY_LIKE_KLT, DEFAULT_ADJUST, INTERVALS } from './constants'
@@ -108,7 +108,7 @@ const TICK_EVENT = 'signalMonitorTick'
 
 /** 监控的信号族 */
 export const SIGNAL_FAMILY_OPTIONS = [
-  { value: 'buysell', label: '买卖点（14 路共振）' },
+  { value: 'buysell', label: '买卖点（15 路共振·可选指标组合）' },
   { value: 'tema', label: 'TEMA 转折（T确）' },
   { value: 'hull', label: 'Hull 转折（H确）' },
 ]
@@ -173,6 +173,12 @@ function cnDayLabel(ms) {
     month: '2-digit',
     day: '2-digit',
   }).format(new Date(ms))
+}
+
+/** 信号流水默认时间范围：东八区今天整天（毫秒闭区间）。流水筛选默认只查今天的，重置也回到该范围 */
+function todayRecordRange() {
+  const start = dayStartSec(cnDayLabel(Date.now())) * 1000
+  return { start, end: start + 86400000 - 1 }
 }
 
 /** 过滤出可监控的周期：月/季/年K 根数不足（已在选项里排除），顺便去重 */
@@ -317,6 +323,8 @@ function toSignalRecord(s, at, envs = '') {
     score: s.score != null ? s.score : null,
     detail: s.detail || '',
     at,
+    // 买卖点组合模式（score/any/all），后端据此分派分数门槛；其它族/旧数据为空串（按 score 语义处理）
+    scoreMode: s.scoreMode || '',
     // 来源监控池环境标注（sim=模拟盘池 / live=实盘池），后端据此决定在哪个环境自动下单
     envs,
   }
@@ -429,6 +437,13 @@ export function createSignalMonitor(opts: MonitorOptions) {
     klt: opts.defaultKlt || '101',
     /** 买卖点灵敏度（与图表同一套档位定义） */
     minScore: 6,
+    /**
+     * 买卖点指标路由（自动交易/提醒用哪些指标的买卖点）：null = 全部 15 路（默认，兼容旧行为）。
+     * 合法 id 见 calc.ts 的 BUY_SELL_ROUTES；'smiZone' = SMI 区域买卖点（底部区转强/顶部区转弱）
+     */
+    buySellRoutes: null,
+    /** 买卖点组合模式：score=共振分数≥灵敏度门槛（默认） / any=任一选中路由命中 / all=窗口内全部选中路由齐备 */
+    buySellCombMode: 'score',
     /** 启用的信号族 */
     families: ['buysell'],
     /** 提醒渠道 */
@@ -441,8 +456,9 @@ export function createSignalMonitor(opts: MonitorOptions) {
     scanIntervalSec: 60,
     /** 信号流水当前页（最新在前） */
     signals: [],
-    /** 流水筛选：keyword 匹配代码/名称，start/end 为命中时刻（毫秒），null 表示不限；kind 筛方向（''=全部 / buy=买点 / sell=卖点） */
-    filter: { keyword: '', start: null, end: null, kind: '' },
+    /** 流水筛选：keyword 匹配代码/名称，start/end 为命中时刻（毫秒），null 表示不限；kind 筛方向（''=全部 / buy=买点 / sell=卖点）。
+     * 默认预填今天整天：流水打开只看今天的信号，清空日期控件（或点重置）再回今天 */
+    filter: { keyword: '', ...todayRecordRange(), kind: '' },
     /** 流水分页状态 */
     page: 1,
     pageSize: 20,
@@ -490,6 +506,9 @@ export function createSignalMonitor(opts: MonitorOptions) {
     },
   })
 
+  /** 用户是否手动改过流水筛选（改过后面板打开时不再把默认「今天」区间滚动到当前自然日） */
+  let filterTouched = false
+
   /** 基线（最新一次已知信号所在 K 线时间），key 为 `代码|周期` ——同票多周期各记一份，互不干扰 */
   const baselines = new Map()
   /** 单实例扫描锁与任务轮转游标（两实例并行扫描，互不挤占） */
@@ -521,6 +540,12 @@ export function createSignalMonitor(opts: MonitorOptions) {
       }
       if (SIGNAL_INTERVAL_OPTIONS.some((it) => it.klt === d.klt)) state.klt = d.klt
       if (BUY_SELL_SCORE_OPTIONS.some((o) => o.value === d.minScore)) state.minScore = d.minScore
+      // 买卖点路由与组合模式（缺省/空/全非法 → null='score'，即全部 15 路 + 共振分数模式，与旧版行为一致）
+      if (Array.isArray(d.buySellRoutes)) {
+        const valid = d.buySellRoutes.filter((r) => BUY_SELL_ROUTES.some((o) => o.id === r))
+        state.buySellRoutes = valid.length ? valid : null
+      }
+      if (['score', 'any', 'all'].includes(d.buySellCombMode)) state.buySellCombMode = d.buySellCombMode
       if (Array.isArray(d.families)) {
         const valid = d.families.filter((f) => SIGNAL_FAMILY_OPTIONS.some((o) => o.value === f))
         if (valid.length) state.families = valid
@@ -556,10 +581,12 @@ export function createSignalMonitor(opts: MonitorOptions) {
     persistTimer = setTimeout(() => {
       persistTimer = null
       try {
-        const { enabled, pool, klt, minScore, families, channels, sound, voice, scanIntervalSec } = state
+        const { enabled, pool, klt, minScore, families, channels, sound, voice, scanIntervalSec, buySellRoutes, buySellCombMode } = state
         const { enabled: atOn, bar: atBar, minScore: atMin, exitScore: atExit, intervalMin: atIv } = state.autoTrend
         localStorage.setItem(opts.persistKey, JSON.stringify({
           enabled, pool, klt, minScore, families, channels, sound, voice, scanIntervalSec,
+          // 路由组合：null 序列化后丢失，读取端以「缺省 = 全路由」兜底，语义一致
+          buySellRoutes, buySellCombMode,
           autoTrend: opts.trendFollow ? { enabled: atOn, bar: atBar, minScore: atMin, exitScore: atExit, intervalMin: atIv } : undefined,
         }))
       } catch { /* 忽略配额异常 */ }
@@ -706,11 +733,32 @@ export function createSignalMonitor(opts: MonitorOptions) {
 
   /** 设置筛选条件并重新查询（缺省字段保持原值，空值表示不限） */
   function setSignalFilter(filter = {}) {
+    filterTouched = true
     const f = state.filter
     if (typeof filter.keyword === 'string') f.keyword = filter.keyword
     if ('start' in filter) f.start = filter.start || null
     if ('end' in filter) f.end = filter.end || null
     if ('kind' in filter) f.kind = filter.kind === 'buy' || filter.kind === 'sell' ? filter.kind : ''
+    return querySignals({ resetPage: true })
+  }
+
+  /** 重置流水筛选为默认并重新查询：关键词清空、区间回到今天、方向不限 */
+  function resetSignalFilter() {
+    filterTouched = false
+    state.filter = { keyword: '', ...todayRecordRange(), kind: '' }
+    return querySignals({ resetPage: true })
+  }
+
+  /**
+   * 面板打开时调用：用户没改过筛选时把默认「今天」区间滚动到当前自然日并重查——
+   * 应用跨天常驻后，启动时算的默认区间还停在启动那天。返回是否触发了重查。
+   */
+  function refreshDefaultFilter() {
+    if (filterTouched) return null
+    const r = todayRecordRange()
+    if (state.filter.start === r.start && state.filter.end === r.end) return null
+    state.filter.start = r.start
+    state.filter.end = r.end
     return querySignals({ resetPage: true })
   }
 
@@ -835,7 +883,9 @@ export function createSignalMonitor(opts: MonitorOptions) {
     const temaCtx = `${entry.code}|${klt}`
     const hullCtx = `${entry.code}|${klt}`
     const key = `${entry.code}|${klt}`
-    const ctx = `${minScore}|${intraday ? 'i' : 'd'}`
+    // 基线指纹必须包含路由/模式配置：否则用户改配置后旧基线不重建，
+    // 新配置下的首评信号会被旧基线吞掉（或放行旧配置下已不成立的信号）
+    const ctx = `${minScore}|${intraday ? 'i' : 'd'}|${state.buySellCombMode}|${(state.buySellRoutes || []).join(',')}`
 
     let st = baselines.get(key)
     if (!st || st.ctx !== ctx) {
@@ -851,6 +901,9 @@ export function createSignalMonitor(opts: MonitorOptions) {
       const { buys, sells } = buySellPointsValues(highs, lows, closes, vols, {
         minScore: opt.minScore,
         minGroups: opt.minGroups,
+        // 指标路由组合：null=全部 15 路；mode 任一/全部命中时算法内部放宽分数/组数门槛
+        routes: state.buySellRoutes,
+        mode: state.buySellCombMode,
         dayKeys: days,
         intraday,
       })
@@ -904,6 +957,8 @@ export function createSignalMonitor(opts: MonitorOptions) {
           // （箭头为了不压 K 线取买点最低价/卖点最高价，直接拿来算收益会系统性高估）
           price: typeof closes[item.i] === 'number' ? closes[item.i] : null,
           score: typeof item.score === 'number' ? item.score : null,
+          // 组合模式随信号上报：后端自动交易对 any/all 模式放行绝对分数门槛
+          scoreMode: state.buySellCombMode,
           detail: Array.isArray(item.reasons) && item.reasons.length ? item.reasons.join('、') : '',
           claim: `${bsCtx}|bs|${kind}|${time}`,
         })
@@ -1195,7 +1250,13 @@ export function createSignalMonitor(opts: MonitorOptions) {
     const kltLabel = (SIGNAL_INTERVAL_OPTIONS.find((it) => it.klt === state.klt) || {}).label || '日K'
     if (signals.length === 1) {
       const s = signals[0]
-      const scoreText = s.score != null ? `\n- **共振强度**: ${Math.round((s.score / BUY_SELL_MAX_SCORE) * 100)}%（${s.score}/${BUY_SELL_MAX_SCORE} 路）` : ''
+      // any/all 组合模式下 score 语义是「窗口内命中路由数」而非共振强度，文案区分避免误读
+      const combMode = s.scoreMode === 'any' || s.scoreMode === 'all' ? s.scoreMode : null
+      const scoreText = s.score != null
+        ? (combMode
+          ? `\n- **命中路由**: ${s.score} 路（${combMode === 'any' ? '任一命中' : '全部命中'}组合模式）`
+          : `\n- **共振强度**: ${Math.round((s.score / BUY_SELL_MAX_SCORE) * 100)}%（${s.score}/${BUY_SELL_MAX_SCORE} 路）`)
+        : ''
       const detailText = s.detail ? `\n- **命中信号**: ${s.detail}` : ''
       const priceText = s.price != null ? `\n- **信号价格**: ${s.price.toFixed(priceDecimalsFor(s.price))}` : ''
       const title = `【${labelOf(s)}】${s.name}`
@@ -1230,9 +1291,14 @@ export function createSignalMonitor(opts: MonitorOptions) {
 
     state.newCount += hit.length
     // 仅在「第 1 页且无筛选」时把新信号并进列表；否则只累加新信号数，不打断正在浏览的结果。
-    // 方向筛选生效时只并入同向信号，异向信号只计入未读，不混进当前视角
+    // 方向筛选生效时只并入同向信号，异向信号只计入未读，不混进当前视角。
+    // 流水默认区间（今天整天）视同无筛选：新信号必然落在今天，仍可实时并入第 1 页
     const curFilter = state.filter
-    const noFilter = !(curFilter.keyword || '').trim() && !curFilter.start && !curFilter.end
+    const todayRange = todayRecordRange()
+    const noFilter =
+      !(curFilter.keyword || '').trim() &&
+      (curFilter.start === todayRange.start && curFilter.end === todayRange.end ||
+        !curFilter.start && !curFilter.end)
     const kindPass = (s) => !curFilter.kind || s.kind === curFilter.kind
     if (state.page === 1 && noFilter) {
       const merged = hit.filter(kindPass)
@@ -1308,6 +1374,8 @@ export function createSignalMonitor(opts: MonitorOptions) {
     querySignals,
     loadMoreSignals,
     setSignalFilter,
+    resetSignalFilter,
+    refreshDefaultFilter,
     clearSignals,
     loadSignalStats,
     setStatsPreset,
