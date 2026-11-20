@@ -80,6 +80,8 @@ const emit = defineEmits([
   'update:longStopLossPrice',
   'update:longTakeProfitPrice',
   'update:costPrice',
+  /** 快捷指数切换：payload 为 { code, name }，取消切换时为 null；供宿主页面同步标题 */
+  'quick-index-change',
 ])
 const chartContainerRef = ref(null)
 /** 十字线当前 K 对应的原始行（东财字段） */
@@ -194,7 +196,7 @@ function toEastMoneyCode(internalCode) {
 // ===== 快捷指数切换：一键切到常用大盘指数，再点一次回到原标的 =====
 const QUICK_INDEXES = [
   { key: 'sh000001', code: '000001.SH', label: '上证指数' },
-  { key: 'sz399001', code: '399001.SZ', label: '创业板指' },
+  { key: 'sz399006', code: '399006.SZ', label: '创业板指' },
   { key: 'sh000680', code: '000680.SH', label: '科创综指' },
   { key: 'sh000688', code: '000688.SH', label: '科创50' },
   { key: 'bj899050', code: '899050.BJ', label: '北证50' },
@@ -205,10 +207,12 @@ async function onQuickIndexSelect(item) {
     quickIndexKey.value = ''
     quickIndexCode.value = ''
     quickIndexName.value = ''
+    emit('quick-index-change', null)
   } else {
     quickIndexKey.value = item.key
     quickIndexCode.value = item.code
     quickIndexName.value = item.label
+    emit('quick-index-change', { code: quickIndexCode.value, name: quickIndexName.value })
   }
   hoverRawRow.value = null
   clearAllMeasure()
